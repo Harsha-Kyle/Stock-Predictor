@@ -1,60 +1,104 @@
-from flask import Flask, render_template, request, jsonify
-import yfinance as yf
-import pandas as pd
-from prophet import Prophet
+import dash
+from dash import html, dcc, Input, Output, State
 import plotly.graph_objs as go
-import json
+import yfinance as yf
+from prophet import Prophet
+import pandas as pd
+import datetime
 
-app = Flask(__name__)
+# Dash App
+app = dash.Dash(__name__, title="Stock Predictor", update_title=None)
+server = app.server
 
-def forecast_stock(ticker, period):
-    df = yf.download(ticker, period="2y")
-    df.reset_index(inplace=True)
-    df = df[['Date', 'Close']]
+# App Layout
+app.layout = html.Div(style={'backgroundColor': '#f9f9f9', 'fontFamily': 'Arial'}, children=[
+    html.Div(style={'backgroundColor': '#0f172a', 'padding': '1rem'}, children=[
+        html.H1("📈 Stock Predictor", style={'color': 'white', 'margin': '0'})
+    ]),
+    
+    html.Div(style={'maxWidth': '900px', 'margin': '2rem auto', 'padding': '2rem', 'backgroundColor': '#1e293b', 'borderRadius': '1rem'}, children=[
+        html.Label("Stock Ticker Symbol", style={'color': 'white'}),
+        dcc.Input(id="ticker", type="text", placeholder="e.g., AAPL, RELIANCE.NS", style={'width': '100%', 'padding': '10px', 'marginTop': '10px'}),
+        
+        html.Br(), html.Br(),
+        html.Label("Forecast Period (Days)", style={'color': 'white'}),
+        dcc.Dropdown(
+            id="days",
+            options=[{'label': f'{i} Days', 'value': i} for i in [7, 14, 30, 60]],
+            value=7,
+            style={'marginTop': '10px'}
+        ),
+        
+        html.Br(),
+        html.Button("Predict Stock Price", id="predict-btn", n_clicks=0, style={'width': '100%', 'padding': '1rem', 'backgroundColor': '#334155', 'color': 'white', 'border': 'none', 'borderRadius': '0.5rem'}),
+        
+        html.Br(), html.Br(),
+        html.Div(id="prediction-output"),
+        dcc.Graph(id="forecast-graph")
+    ])
+])
+
+# Callback
+@app.callback(
+    [Output("prediction-output", "children"),
+     Output("forecast-graph", "figure")],
+    [Input("predict-btn", "n_clicks")],
+    [State("ticker", "value"),
+     State("days", "value")]
+)
+def predict_stock(n_clicks, ticker, days):
+    if not ticker or not days:
+        return html.Div("Enter valid inputs", style={'color': 'red'}), go.Figure()
+
+    # Fetch data
+    end = datetime.date.today()
+    start = end - datetime.timedelta(days=365)
+    df = yf.download(ticker, start=start, end=end)
+
+    if df.empty:
+        return html.Div("Invalid ticker or no data available.", style={'color': 'red'}), go.Figure()
+
+    df = df.reset_index()[['Date', 'Close']]
     df.rename(columns={'Date': 'ds', 'Close': 'y'}, inplace=True)
 
+    # Prophet forecast
     model = Prophet()
     model.fit(df)
 
-    future = model.make_future_dataframe(periods=period)
+    future = model.make_future_dataframe(periods=days)
     forecast = model.predict(future)
 
-    last_prediction = forecast.iloc[-1]
-    predicted_price = round(last_prediction['yhat'], 2)
+    # Merge for display
+    merged = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].copy()
+    merged['Actual'] = df.set_index('ds')['y'].reindex(merged['ds']).values
 
-    actual_price = df.iloc[-1]['y']
-    suggestion = "BUY" if predicted_price > actual_price * 1.05 else "SELL" if predicted_price < actual_price * 0.95 else "HOLD"
+    # Predicted price
+    pred_price = round(merged.iloc[-1]['yhat'], 2)
+    invest_suggestion = "BUY 📈" if pred_price > df['y'].iloc[-1] else "SELL 📉" if pred_price < df['y'].iloc[-1] else "HOLD ⚖️"
 
+    # Chart
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], name='Actual Price'))
-    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name='Forecasted Price'))
-    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], name='Upper Bound', line=dict(dash='dot')))
-    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], name='Lower Bound', line=dict(dash='dot')))
-    fig.update_layout(title=f'{ticker} Forecast', xaxis_title='Date', yaxis_title='Price')
+    fig.add_trace(go.Scatter(x=merged['ds'], y=merged['Actual'], mode='lines', name='Actual Price'))
+    fig.add_trace(go.Scatter(x=merged['ds'], y=merged['yhat'], mode='lines', name='Forecasted Price'))
+    fig.add_trace(go.Scatter(x=merged['ds'], y=merged['yhat_upper'], mode='lines', name='Upper Bound', line=dict(dash='dot'), opacity=0.3))
+    fig.add_trace(go.Scatter(x=merged['ds'], y=merged['yhat_lower'], mode='lines', name='Lower Bound', line=dict(dash='dot'), opacity=0.3))
 
-    chart_json = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
+    fig.update_layout(
+        plot_bgcolor='#1e293b',
+        paper_bgcolor='#1e293b',
+        font=dict(color='white'),
+        xaxis_title="Date",
+        yaxis_title="Price",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
 
-    return predicted_price, suggestion, chart_json
+    output = html.Div([
+        html.H3(f"📊 Predicted Price: ₹{pred_price}", style={'color': '#10b981'}),
+        html.H4(f"📌 Suggestion: {invest_suggestion}", style={'color': '#e2e8f0'})
+    ])
 
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    if request.method == 'POST':
-        ticker = request.form['ticker'].strip().upper()
-        period = int(request.form['period'])
+    return output, fig
 
-        try:
-            predicted_price, suggestion, chart = forecast_stock(ticker, period)
-            return render_template('index.html',
-                                   ticker=ticker,
-                                   period=period,
-                                   predicted_price=predicted_price,
-                                   suggestion=suggestion,
-                                   chart=chart)
-        except Exception as e:
-            return render_template('index.html', error=str(e))
-
-    return render_template('index.html')
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
-
+    app.run_server(debug=True)
