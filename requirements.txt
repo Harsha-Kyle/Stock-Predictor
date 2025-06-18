@@ -1,6 +1,6 @@
-flask
-yfinance
-prophet
+dash
 pandas
+yfinance
 plotly
+prophet
 gunicorn
