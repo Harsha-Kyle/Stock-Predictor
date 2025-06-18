@@ -1,6 +1,0 @@
-
-{
-  "name": "Stock Predictor - Integrated App",
-  "description": "A React frontend served by a Flask backend. Provides stock prediction simulations. Deployed as a single web service.",
-  "requestFramePermissions": []
-}
