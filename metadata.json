@@ -1,5 +1,0 @@
-{
-  "name": "Stock Predictor Frontend",
-  "description": "A React and Tailwind CSS frontend for a stock prediction application, designed for easy deployment as a static site. Uses CDNs for dependencies.",
-  "requestFramePermissions": []
-}
