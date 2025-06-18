@@ -1,4 +1,6 @@
-
-Flask>=2.0
-gunicorn>=20.0 
-# Add other Python dependencies here if needed later (e.g., pandas, prophet)
+flask
+yfinance
+prophet
+pandas
+plotly
+gunicorn
