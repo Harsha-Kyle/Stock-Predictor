@@ -1,7 +1,9 @@
 # requirements.txt
+
 Flask
 gunicorn
 pandas
 yfinance
 prophet
 plotly
+scipy
