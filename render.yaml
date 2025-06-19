@@ -1,12 +1,20 @@
-# render.yaml
+# render.yaml (Final, Production-Ready Version)
 
 services:
   - type: web
     name: live-stock-predictor
     runtime: python
-    plan: free # or "starter"
+    plan: free
+    
+    # The build command remains the same
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "gunicorn app:app"
+    
+    # CRITICAL CHANGE: Update the start command with resource settings
+    # --workers 1: Crucial for low-memory environments. Uses one process.
+    # --timeout 120: Increases the request timeout to 120 seconds (2 minutes).
+    # --threads 2: Allows the single worker to handle a bit more concurrency.
+    startCommand: "gunicorn --workers 1 --threads 2 --timeout 120 app:app"
+    
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.4 # Prophet works well with recent Python versions
+        value: 3.11.4
