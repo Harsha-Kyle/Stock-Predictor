@@ -1,151 +1,141 @@
+# app.py
+
+import os
+from flask import Flask, render_template, request, jsonify
 import yfinance as yf
 from prophet import Prophet
 import pandas as pd
 import plotly.graph_objs as go
-from dash import Dash, dcc, html, Input, Output, State
-import dash_bootstrap_components as dbc
 from datetime import datetime
 
-# Initialize app with Bootstrap
-app = Dash(__name__, external_stylesheets=[dbc.themes.LUX])
-server = app.server
+# A predefined list of popular tickers for the search suggestion
+POPULAR_TICKERS_PY = [
+  {"symbol": "AAPL", "name": "Apple Inc."},
+  {"symbol": "GOOGL", "name": "Alphabet Inc. (Google)"},
+  {"symbol": "MSFT", "name": "Microsoft Corp."},
+  {"symbol": "TSLA", "name": "Tesla, Inc."},
+  {"symbol": "AMZN", "name": "Amazon.com, Inc."},
+  {"symbol": "META", "name": "Meta Platforms, Inc."},
+  {"symbol": "RELIANCE.NS", "name": "Reliance Industries Ltd."},
+  {"symbol": "TCS.NS", "name": "Tata Consultancy Services Ltd."},
+  {"symbol": "INFY.NS", "name": "Infosys Ltd."},
+  {"symbol": "NVDA", "name": "NVIDIA Corporation"}
+]
 
-# Available stock options
-stock_options = {
-    "GOOGL - Alphabet Inc. (Google)": "GOOGL",
-    "AAPL - Apple Inc.": "AAPL",
-    "MSFT - Microsoft Corp.": "MSFT",
-    "AMZN - Amazon.com Inc.": "AMZN",
-    "TSLA - Tesla Inc.": "TSLA",
-}
+app = Flask(__name__)
 
-# Layout
-app.layout = dbc.Container([
-    html.Br(),
+def create_main_chart(df, forecast):
+    """Creates the main Plotly chart with actual, forecast, and confidence intervals."""
+    fig = go.Figure()
+    # Actual prices
+    fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], mode='lines', name='Actual Price', line=dict(color='#3498db')))
+    # Forecast prices
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='Forecasted Price', line=dict(color='#2ecc71', dash='dash')))
+    # Confidence interval (upper bound)
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], fill=None, mode='lines', line_color='rgba(46, 204, 113, 0.2)', name='Upper Bound'))
+    # Confidence interval (lower bound)
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], fill='tonexty', mode='lines', line_color='rgba(46, 204, 113, 0.2)', name='Lower Bound'))
+    
+    fig.update_layout(
+        template='plotly_dark',
+        xaxis_title='Date',
+        yaxis_title='Stock Price',
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=40, r=40, t=40, b=40)
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
 
-    dbc.Row([
-        dbc.Col(html.H2("📈 Stock Predictor"), width="auto")
-    ]),
+def create_backtest_chart(df, forecast):
+    """Creates a Plotly chart comparing last 7 days of actual vs predicted data."""
+    # Merge actual and forecasted data on the date
+    merged_df = pd.merge(df, forecast[['ds', 'yhat']], on='ds')
+    # Get the last 7 days of historical data for backtesting
+    backtest_df = merged_df.tail(7)
 
-    html.Hr(),
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=backtest_df['ds'], y=backtest_df['y'], mode='lines+markers', name='Actual Price', line=dict(color='#3498db')))
+    fig.add_trace(go.Scatter(x=backtest_df['ds'], y=backtest_df['yhat'], mode='lines+markers', name='Predicted Price (Backtest)', line=dict(color='#2ecc71')))
+    
+    fig.update_layout(
+        template='plotly_dark',
+        xaxis_title='Date',
+        yaxis_title='Stock Price',
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=40, r=40, t=40, b=40)
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
 
-    dbc.Row([
-        dbc.Col([
-            html.Label("Stock Ticker Symbol"),
-            dcc.Dropdown(
-                id="ticker-dropdown",
-                options=[{"label": k, "value": v} for k, v in stock_options.items()],
-                placeholder="Select a stock",
-                value="GOOGL"
-            ),
-        ])
-    ]),
+@app.route('/api/predict', methods=['GET'])
+def predict():
+    ticker = request.args.get('ticker')
+    days_str = request.args.get('days')
 
-    html.Br(),
-
-    dbc.Row([
-        dbc.Col([
-            html.Label("Forecast Period (Days)"),
-            dcc.Dropdown(
-                id="forecast-dropdown",
-                options=[{"label": f"{d} Days", "value": d} for d in [7, 15, 30, 60, 90]],
-                value=15
-            ),
-        ])
-    ]),
-
-    html.Br(),
-
-    dbc.Row([
-        dbc.Col([
-            dbc.Button("Predict Stock Price", id="predict-button", color="primary", block=True),
-        ])
-    ]),
-
-    html.Br(),
-
-    dbc.Row([
-        dbc.Col([
-            dcc.Loading(
-                id="loading-output",
-                type="circle",
-                children=html.Div(id="output-message")
-            )
-        ])
-    ]),
-
-    html.Br(),
-
-    dbc.Row([
-        dbc.Col([
-            dcc.Graph(id="historical-graph")
-        ])
-    ]),
-
-    dbc.Row([
-        dbc.Col([
-            dcc.Graph(id="forecast-graph")
-        ])
-    ]),
-
-    html.Hr(),
-
-    html.Footer([
-        html.P("© 2025 Stock Predictor. All rights reserved.", style={"fontSize": "0.9rem"}),
-        html.P("Disclaimer: Predictions are for informational purposes only and not financial advice.",
-               style={"fontSize": "0.8rem", "color": "gray"})
-    ], style={"textAlign": "center", "marginTop": "20px"}),
-
-], fluid=True)
-
-
-# Callbacks
-@app.callback(
-    [Output("historical-graph", "figure"),
-     Output("forecast-graph", "figure"),
-     Output("output-message", "children")],
-    [Input("predict-button", "n_clicks")],
-    [State("ticker-dropdown", "value"),
-     State("forecast-dropdown", "value")]
-)
-def update_graphs(n_clicks, ticker, period):
-    if not ticker or not period:
-        return {}, {}, dbc.Alert("Please select a stock and forecast period.", color="warning")
+    if not ticker or not days_str:
+        return jsonify({"error": "Missing ticker or days parameter"}), 400
+    
+    try:
+        forecast_days_int = int(days_str)
+    except ValueError:
+        return jsonify({"error": "Invalid days parameter, must be an integer"}), 400
 
     try:
-        df = yf.download(ticker, period="2y")
-        df.reset_index(inplace=True)
-
-        # Plot Historical Prices
-        fig_hist = go.Figure()
-        fig_hist.add_trace(go.Scatter(x=df["Date"], y=df["Close"],
-                                      mode="lines", name="Close Price"))
-        fig_hist.update_layout(title="Historical Stock Prices", template="plotly_white")
-
-        # Prophet Forecast
-        prophet_df = df[["Date", "Close"]].rename(columns={"Date": "ds", "Close": "y"})
+        # 1. Fetch live data
+        data = yf.download(ticker, period="1y")
+        if data.empty:
+            return jsonify({"error": f"No data found for ticker '{ticker}'. Please check the symbol."}), 404
+        
+        # 2. Prepare data for Prophet
+        df = data.reset_index()[['Date', 'Close']].rename(columns={'Date': 'ds', 'Close': 'y'})
+        
+        # 3. Create and fit the Prophet model
         model = Prophet()
-        model.fit(prophet_df)
-
-        future = model.make_future_dataframe(periods=period)
+        model.fit(df)
+        
+        # 4. Make future predictions
+        future = model.make_future_dataframe(periods=forecast_days_int)
         forecast = model.predict(future)
+        
+        # 5. Extract key metrics and create charts
+        predicted_price_for_last_day = forecast['yhat'].iloc[-1]
+        
+        # Investment Suggestion Logic
+        last_actual = df['y'].iloc[-1]
+        avg_next_few_days_forecast = forecast['yhat'].iloc[-forecast_days_int:].head(7).mean()
+        overall_change = (avg_next_few_days_forecast - last_actual) / last_actual
+        
+        if overall_change > 0.03:
+            advice = "BUY (Upward Trend)"
+        elif overall_change < -0.03:
+            advice = "SELL (Downward Trend)"
+        else:
+            advice = "HOLD (Neutral)"
 
-        # Plot Forecast
-        fig_forecast = go.Figure()
-        fig_forecast.add_trace(go.Scatter(x=forecast["ds"], y=forecast["yhat"],
-                                          mode="lines", name="Predicted"))
-        fig_forecast.add_trace(go.Scatter(x=forecast["ds"], y=forecast["yhat_upper"],
-                                          mode="lines", name="Upper CI", line=dict(dash="dot")))
-        fig_forecast.add_trace(go.Scatter(x=forecast["ds"], y=forecast["yhat_lower"],
-                                          mode="lines", name="Lower CI", line=dict(dash="dot")))
-        fig_forecast.update_layout(title="Forecasted Stock Prices", template="plotly_white")
+        # Prepare forecast table data (future dates only)
+        future_forecast_table = forecast[forecast['ds'] > df['ds'].max()][['ds', 'yhat']]
+        future_forecast_table['ds'] = future_forecast_table['ds'].dt.strftime('%Y-%m-%d')
+        future_forecast_table_data = future_forecast_table.to_dict(orient='records')
+        
+        # Generate Plotly charts
+        main_chart_html = create_main_chart(df, forecast)
+        backtest_chart_html = create_backtest_chart(df, forecast)
 
-        return fig_hist, fig_forecast, dbc.Alert("Prediction successful!", color="success")
+        return jsonify({
+            "ticker": ticker,
+            "forecastDays": forecast_days_int,
+            "predictedPriceForLastDay": round(predicted_price_for_last_day, 2),
+            "advice": advice,
+            "futureForecastTableData": future_forecast_table_data,
+            "mainChartHtml": main_chart_html,
+            "backtestChartHtml": backtest_chart_html,
+        })
 
     except Exception as e:
-        return {}, {}, dbc.Alert(f"Error: {str(e)}", color="danger")
+        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 
+@app.route('/')
+def home():
+    return render_template('index.html', popular_tickers=POPULAR_TICKERS_PY)
 
-# Run app
-if __name__ == "__main__":
-    app.run_server(debug=True)
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
