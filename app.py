@@ -1,4 +1,4 @@
-# app.py
+# app.py (Corrected)
 
 import os
 from flask import Flask, render_template, request, jsonify
@@ -25,17 +25,12 @@ POPULAR_TICKERS_PY = [
 app = Flask(__name__)
 
 def create_main_chart(df, forecast):
-    """Creates the main Plotly chart with actual, forecast, and confidence intervals."""
+    # This function remains the same
     fig = go.Figure()
-    # Actual prices
     fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], mode='lines', name='Actual Price', line=dict(color='#3498db')))
-    # Forecast prices
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='Forecasted Price', line=dict(color='#2ecc71', dash='dash')))
-    # Confidence interval (upper bound)
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], fill=None, mode='lines', line_color='rgba(46, 204, 113, 0.2)', name='Upper Bound'))
-    # Confidence interval (lower bound)
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], fill='tonexty', mode='lines', line_color='rgba(46, 204, 113, 0.2)', name='Lower Bound'))
-    
     fig.update_layout(
         template='plotly_dark',
         xaxis_title='Date',
@@ -46,16 +41,12 @@ def create_main_chart(df, forecast):
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 def create_backtest_chart(df, forecast):
-    """Creates a Plotly chart comparing last 7 days of actual vs predicted data."""
-    # Merge actual and forecasted data on the date
+    # This function remains the same
     merged_df = pd.merge(df, forecast[['ds', 'yhat']], on='ds')
-    # Get the last 7 days of historical data for backtesting
     backtest_df = merged_df.tail(7)
-
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=backtest_df['ds'], y=backtest_df['y'], mode='lines+markers', name='Actual Price', line=dict(color='#3498db')))
     fig.add_trace(go.Scatter(x=backtest_df['ds'], y=backtest_df['yhat'], mode='lines+markers', name='Predicted Price (Backtest)', line=dict(color='#2ecc71')))
-    
     fig.update_layout(
         template='plotly_dark',
         xaxis_title='Date',
@@ -79,26 +70,29 @@ def predict():
         return jsonify({"error": "Invalid days parameter, must be an integer"}), 400
 
     try:
-        # 1. Fetch live data
         data = yf.download(ticker, period="1y")
         if data.empty:
             return jsonify({"error": f"No data found for ticker '{ticker}'. Please check the symbol."}), 404
         
-        # 2. Prepare data for Prophet
         df = data.reset_index()[['Date', 'Close']].rename(columns={'Date': 'ds', 'Close': 'y'})
         
-        # 3. Create and fit the Prophet model
+        # --- THE FIX IS HERE ---
+        # 1. Explicitly convert 'ds' to datetime objects to ensure Prophet compatibility.
+        df['ds'] = pd.to_datetime(df['ds'])
+
+        # 2. Add a check for sufficient data. Prophet needs at least 2 data points.
+        if len(df) < 2:
+            return jsonify({"error": f"Not enough historical data for '{ticker}' to make a forecast."}), 400
+        # --- END OF FIX ---
+
         model = Prophet()
         model.fit(df)
         
-        # 4. Make future predictions
         future = model.make_future_dataframe(periods=forecast_days_int)
         forecast = model.predict(future)
         
-        # 5. Extract key metrics and create charts
         predicted_price_for_last_day = forecast['yhat'].iloc[-1]
         
-        # Investment Suggestion Logic
         last_actual = df['y'].iloc[-1]
         avg_next_few_days_forecast = forecast['yhat'].iloc[-forecast_days_int:].head(7).mean()
         overall_change = (avg_next_few_days_forecast - last_actual) / last_actual
@@ -110,12 +104,10 @@ def predict():
         else:
             advice = "HOLD (Neutral)"
 
-        # Prepare forecast table data (future dates only)
         future_forecast_table = forecast[forecast['ds'] > df['ds'].max()][['ds', 'yhat']]
         future_forecast_table['ds'] = future_forecast_table['ds'].dt.strftime('%Y-%m-%d')
         future_forecast_table_data = future_forecast_table.to_dict(orient='records')
         
-        # Generate Plotly charts
         main_chart_html = create_main_chart(df, forecast)
         backtest_chart_html = create_backtest_chart(df, forecast)
 
@@ -130,6 +122,7 @@ def predict():
         })
 
     except Exception as e:
+        # This will now catch other potential errors more cleanly.
         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 
 @app.route('/')
