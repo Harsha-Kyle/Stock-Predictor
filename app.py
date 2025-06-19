@@ -1,4 +1,4 @@
-# app.py (The Correct and Final Version)
+# app.py (The Truly Final and Correct Version)
 
 import os
 import traceback
@@ -62,19 +62,22 @@ def predict():
         if data.empty:
             return jsonify({"error": f"No data found for ticker '{ticker}'. Please check the symbol."}), 404
         
-        # --- THE CORRECT AND UNBREAKABLE FIX ---
-        # 1. Manually create a new DataFrame with the right columns from the start.
-        #    `data.index` is the Date, `data['Close'].values` are the closing prices.
-        df_prophet = pd.DataFrame({'ds': data.index, 'y': data['Close'].values})
+        # --- THE CORRECT AND FINAL FIX ---
+        # 1. Manually create a new DataFrame.
+        # 2. Use .flatten() on the 'y' values to guarantee a 1-dimensional array.
+        df_prophet = pd.DataFrame({
+            'ds': data.index,
+            'y': data['Close'].values.flatten()
+        })
 
-        # 2. Perform cleaning on this correctly structured DataFrame.
+        # Perform cleaning on the correctly structured DataFrame.
         df_prophet.dropna(inplace=True)
         df_prophet['ds'] = pd.to_datetime(df_prophet['ds']).dt.tz_localize(None)
         
         if len(df_prophet) < 2:
             return jsonify({"error": f"Not enough historical data for '{ticker}' to make a forecast."}), 400
 
-        # 3. Fit the model using the guaranteed-clean DataFrame.
+        # Fit the model using the guaranteed-clean DataFrame.
         model = Prophet()
         model.fit(df_prophet)
         
