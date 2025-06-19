@@ -1,4 +1,4 @@
-# app.py (High-Fidelity Simulation Version)
+# app.py (Final Polished Version)
 
 import os
 import traceback
@@ -25,7 +25,7 @@ POPULAR_TICKERS_PY = [
     {"symbol": "INFY.NS", "name": "Infosys Ltd."}, {"symbol": "NVDA", "name": "NVIDIA Corporation"}
 ]
 
-# --- Lightweight Simulation Logic (from the very first version) ---
+# --- Lightweight Simulation Logic ---
 def pseudo_random_py(seed_string, salt=0):
   h = 1779033703 ^ (len(seed_string) + salt)
   for char_code in [ord(c) for c in seed_string]:
@@ -37,26 +37,18 @@ def pseudo_random_py(seed_string, salt=0):
 
 # --- Advanced Charting Functions ---
 def create_main_chart(historical_df, forecast_df):
-    """Creates the main Plotly chart with actual, forecast, and confidence intervals."""
     fig = go.Figure()
-    # Actual prices
     fig.add_trace(go.Scatter(x=historical_df['ds'], y=historical_df['y'], mode='lines', name='Actual Price', line=dict(color='#3498db')))
-    # Forecast prices
     fig.add_trace(go.Scatter(x=forecast_df['ds'], y=forecast_df['yhat'], mode='lines', name='Forecasted Price', line=dict(color='#2ecc71', dash='dash')))
-    # Confidence interval (upper bound)
     fig.add_trace(go.Scatter(x=forecast_df['ds'], y=forecast_df['yhat_upper'], fill=None, mode='lines', line_color='rgba(46, 204, 113, 0.2)', name='Upper Bound', showlegend=False))
-    # Confidence interval (lower bound)
     fig.add_trace(go.Scatter(x=forecast_df['ds'], y=forecast_df['yhat_lower'], fill='tonexty', mode='lines', line_color='rgba(46, 204, 113, 0.2)', name='Confidence Interval', showlegend=True))
-    
     fig.update_layout(template='plotly_dark', xaxis_title='Date', yaxis_title='Stock Price', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=40, r=40, t=40, b=40))
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 def create_backtest_chart(backtest_df):
-    """Creates a Plotly chart comparing last 7 days of actual vs predicted data."""
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=backtest_df['ds'], y=backtest_df['actual'], mode='lines+markers', name='Actual Price', line=dict(color='#3498db')))
     fig.add_trace(go.Scatter(x=backtest_df['ds'], y=backtest_df['predicted'], mode='lines+markers', name='Predicted Price (Backtest)', line=dict(color='#2ecc71')))
-    
     fig.update_layout(template='plotly_dark', xaxis_title='Date', yaxis_title='Stock Price', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=40, r=40, t=40, b=40))
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
@@ -75,7 +67,6 @@ def predict():
         return jsonify({"error": "Invalid days parameter, must be an integer"}), 400
 
     try:
-        # STEP 1: Fetch REAL historical data
         data = yf.download(ticker, period="1y", auto_adjust=True)
         if data.empty:
             return jsonify({"error": f"No data found for ticker '{ticker}'. Please check the symbol."}), 404
@@ -84,10 +75,10 @@ def predict():
         df_history.dropna(inplace=True)
         df_history['ds'] = pd.to_datetime(df_history['ds']).dt.tz_localize(None)
 
-        if len(df_history) < 7: # Need at least 7 for backtest
-            return jsonify({"error": "Not enough historical data available."}), 400
+        if len(df_history) < 7:
+            return jsonify({"error": "Not enough historical data available for backtest."}), 400
 
-        # STEP 2: Generate High-Fidelity SIMULATED Forecast
+        # --- High-Fidelity SIMULATED Forecast ---
         last_price = df_history['y'].iloc[-1]
         last_date = df_history['ds'].iloc[-1]
         
@@ -95,30 +86,32 @@ def predict():
         current_price = last_price
         for i in range(forecast_days_int):
             date = last_date + timedelta(days=i + 1)
-            # More volatile and realistic price change
-            change = (pseudo_random_py(ticker, i) - 0.495) * (current_price * 0.065) 
+            change = (pseudo_random_py(ticker, i) - 0.495) * (current_price * 0.065)
             current_price += change
-            
-            # Simulate confidence bounds
-            bound_percentage = 0.03 + (pseudo_random_py(ticker, i + 1000) * 0.07) # 3% to 10%
-            yhat_upper = current_price * (1 + bound_percentage)
-            yhat_lower = current_price * (1 - bound_percentage)
-
+            bound_percentage = 0.03 + (pseudo_random_py(ticker, i + 1000) * 0.07)
             future_data.append({
-                'ds': date,
-                'yhat': current_price,
-                'yhat_upper': yhat_upper,
-                'yhat_lower': yhat_lower
+                'ds': date, 'yhat': current_price,
+                'yhat_upper': current_price * (1 + bound_percentage),
+                'yhat_lower': current_price * (1 - bound_percentage)
             })
         
-        df_forecast = pd.DataFrame(future_data)
+        df_forecast_future = pd.DataFrame(future_data)
 
-        # STEP 3: Generate a SIMULATED Backtest
+        # --- FIX: Anchor the forecast line to the historical line ---
+        last_historical_point = df_history.iloc[[-1]].copy()
+        last_historical_point.rename(columns={'y': 'yhat'}, inplace=True)
+        last_historical_point['yhat_upper'] = last_historical_point['yhat']
+        last_historical_point['yhat_lower'] = last_historical_point['yhat']
+        
+        # Combine the anchor point with the future forecast
+        df_forecast_connected = pd.concat([last_historical_point, df_forecast_future], ignore_index=True)
+
+        # --- SIMULATED Backtest ---
         df_history_for_backtest = df_history.tail(7).copy()
         backtest_predictions = []
         for i, row in df_history_for_backtest.iterrows():
-            # Simulate a prediction that is close to the actual value
-            noise = (pseudo_random_py(ticker, i) - 0.5) * (row['y'] * 0.04) # +/- 2% error
+            # Increase noise slightly to make the lines more distinct
+            noise = (pseudo_random_py(ticker, i + 2000) - 0.5) * (row['y'] * 0.08)
             backtest_predictions.append(row['y'] + noise)
         
         df_backtest = pd.DataFrame({
@@ -128,19 +121,20 @@ def predict():
         })
 
         # --- Analysis and Response ---
-        predicted_price_for_last_day = df_forecast['yhat'].iloc[-1] if not df_forecast.empty else last_price
-        avg_next_few_days_forecast = df_forecast['yhat'].head(7).mean()
+        predicted_price_for_last_day = df_forecast_future['yhat'].iloc[-1] if not df_forecast_future.empty else last_price
+        avg_next_few_days_forecast = df_forecast_future['yhat'].head(7).mean()
 
         overall_change = (avg_next_few_days_forecast - last_price) / last_price
         if overall_change > 0.03: advice = "BUY (Upward Trend)"
         elif overall_change < -0.03: advice = "SELL (Downward Trend)"
         else: advice = "HOLD (Neutral)"
 
-        future_forecast_table_data = df_forecast[['ds', 'yhat']].copy()
+        future_forecast_table_data = df_forecast_future[['ds', 'yhat']].copy()
         future_forecast_table_data['ds'] = future_forecast_table_data['ds'].dt.strftime('%Y-%m-%d')
         future_forecast_table_data = future_forecast_table_data.to_dict(orient='records')
         
-        main_chart_html = create_main_chart(df_history, df_forecast)
+        # Pass the corrected forecast data to the chart function
+        main_chart_html = create_main_chart(df_history, df_forecast_connected)
         backtest_chart_html = create_backtest_chart(df_backtest)
 
         return jsonify({
@@ -155,11 +149,9 @@ def predict():
         app.logger.error(traceback.format_exc())
         return jsonify({"error": "An internal server error occurred. This has been logged."}), 500
 
-# --- Main HTML Route ---
 @app.route('/')
 def home():
     return render_template('index.html', popular_tickers=POPULAR_TICKERS_PY)
 
-# --- Local Development Entry Point ---
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
