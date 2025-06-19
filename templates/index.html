@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Stock Predictor</title>
+    <!-- We don't include Plotly.js here because the Python fig.to_html() can include it. -->
+    <!-- However, for efficiency, we can include it once here and set include_plotlyjs=False in Python. -->
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+    <style>
+        /* CSS styles from the previous answer remain unchanged */
+        :root {
+            --bg-color: #1a202c;
+            --card-color: #2c3e50;
+            --text-color: #e2e8f0;
+            --text-secondary-color: #a0aec0;
+            --border-color: #4a5568;
+            --primary-color: #90caf9;
+            --green-color: #2ecc71;
+            --blue-color: #3498db;
+        }
+        body { margin: 0; font-family: 'Roboto', sans-serif; background-color: var(--bg-color); color: var(--text-color); }
+        .container { max-width: 1000px; margin: 0 auto; padding: 24px; }
+        header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; background-color: var(--card-color); border-bottom: 1px solid var(--border-color); }
+        header h1 { font-size: 1.5rem; margin: 0; }
+        .card { background-color: var(--card-color); border-radius: 8px; padding: 24px; margin-bottom: 24px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .form-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 16px; align-items: center; }
+        input, select { width: 100%; padding: 14px; background-color: #3e4c5f; border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); font-size: 1rem; box-sizing: border-box; }
+        .btn { background-color: var(--primary-color); color: #1a202c; border: none; padding: 15px; border-radius: 4px; font-weight: bold; font-size: 1rem; cursor: pointer; transition: background-color 0.2s; height: 54px; }
+        .btn:disabled { background-color: #555; cursor: not-allowed; }
+        .btn:hover:not(:disabled) { background-color: #6daedf; }
+        .results-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .summary-card { background-color: var(--bg-color); padding: 16px; border-radius: 6px; text-align: center; border: 1px solid var(--border-color); }
+        .summary-card h3 { margin: 0 0 8px 0; font-size: 2.2rem; font-weight: bold; }
+        .summary-card p { margin: 0; color: var(--text-secondary-color); }
+        .hidden { display: none; }
+        .error-alert { background-color: #c53030; color: white; padding: 16px; border-radius: 4px; margin-bottom: 24px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border-color); }
+        th { font-weight: bold; }
+        td:last-child, th:last-child { text-align: right; }
+        .table-container { max-height: 300px; overflow-y: auto; }
+        footer { text-align: center; padding: 24px; color: var(--text-secondary-color); font-size: 0.9rem; }
+        .info-icon { cursor: pointer; position: relative; }
+        .popover { position: absolute; background-color: #3e4c5f; padding: 16px; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.2); top: 40px; right: 0; width: 200px; z-index: 10; }
+        .popover p { margin: 4px 0; }
+        @media (max-width: 768px) { .form-grid, .results-grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Live Stock Predictor</h1>
+        <div class="info-icon">
+            <span class="material-icons" id="infoIcon">person</span>
+            <div id="popover" class="popover hidden">
+                <p><b>Done by:</b> Harsha Kyle</p>
+                <p><b>College:</b> Saveetha</p>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Input Form -->
+        <div class="card">
+            <form id="predictForm" class="form-grid">
+                <div>
+                    <label for="tickerInput" style="display: block; margin-bottom: 8px;">Stock Ticker Symbol</label>
+                    <input id="tickerInput" type="text" list="ticker-list" placeholder="e.g., AAPL, RELIANCE.NS" required>
+                    <datalist id="ticker-list">
+                        {% for ticker in popular_tickers %}
+                            <option value="{{ ticker.symbol }}">{{ ticker.name }}</option>
+                        {% endfor %}
+                    </datalist>
+                </div>
+                <div>
+                    <label for="daysInput" style="display: block; margin-bottom: 8px;">Forecast Period</label>
+                    <select id="daysInput">
+                        <option value="7">7 Days</option>
+                        <option value="15">15 Days</option>
+                        <option value="30">30 Days</option>
+                    </select>
+                </div>
+                <button type="submit" id="predictBtn" class="btn">Predict Stock Price</button>
+            </form>
+        </div>
+
+        <div id="errorContainer" class="error-alert hidden"></div>
+        <div id="welcomeMessage" class="card">
+            <h2>Welcome to the Live Stock Predictor</h2>
+            <p>Select a stock ticker and a forecast period to get a live prediction using Meta's Prophet model.</p>
+            <img src="https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?auto=format&fit=crop&w=1200&q=80" alt="Welcome Image" style="width: 100%; max-width: 600px; border-radius: 8px; margin-top: 16px;">
+        </div>
+
+        <!-- Results Section (hidden by default) -->
+        <div id="resultsSection" class="hidden">
+            <div class="card">
+                <h2 id="summaryTitle"></h2>
+                <div class="results-grid">
+                    <div class="summary-card">
+                        <p>Predicted Price (End of Period)</p>
+                        <h3 id="predictedPrice"></h3>
+                    </div>
+                    <div class="summary-card">
+                        <p>Investment Suggestion</p>
+                        <h3 id="investmentAdvice" style="font-size: 1.5rem;"></h3>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Price Forecast Chart</h2>
+                <div id="mainChartContainer"></div> <!-- Placeholder for Plotly chart -->
+            </div>
+
+            <div class="card">
+                <h2>Future Forecast Data</h2>
+                <div class="table-container">
+                    <table id="forecastTable">
+                        <thead><tr><th>Date</th><th>Predicted Price</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Backtest (Last 7 Days)</h2>
+                <div id="backtestChartContainer"></div> <!-- Placeholder for Plotly chart -->
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>© 2025 Stock Predictor. All rights reserved.</p>
+        <p>Disclaimer: Predictions are for informational purposes only and not financial advice.</p>
+    </footer>
+
+    <script>
+    // --- JAVASCRIPT LOGIC (Simplified for Plotly) ---
+    document.addEventListener('DOMContentLoaded', () => {
+        const predictForm = document.getElementById('predictForm');
+        const predictBtn = document.getElementById('predictBtn');
+        const errorContainer = document.getElementById('errorContainer');
+        const welcomeMessage = document.getElementById('welcomeMessage');
+        const resultsSection = document.getElementById('resultsSection');
+
+        // Popover logic (unchanged)
+        const infoIcon = document.getElementById('infoIcon');
+        const popover = document.getElementById('popover');
+        infoIcon.addEventListener('click', () => popover.classList.toggle('hidden'));
+        document.addEventListener('click', (e) => {
+            if (!infoIcon.contains(e.target) && !popover.contains(e.target)) {
+                popover.classList.add('hidden');
+            }
+        });
+
+        predictForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const ticker = document.getElementById('tickerInput').value.toUpperCase();
+            const days = document.getElementById('daysInput').value;
+
+            if (!ticker) {
+                showError('Please enter a ticker symbol.');
+                return;
+            }
+
+            predictBtn.disabled = true;
+            predictBtn.textContent = 'Fetching & Forecasting...';
+            errorContainer.classList.add('hidden');
+            
+            try {
+                const response = await fetch(`/api/predict?ticker=${ticker}&days=${days}`);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'An unknown error occurred.');
+                }
+                
+                welcomeMessage.classList.add('hidden');
+                resultsSection.classList.remove('hidden');
+                renderResults(data);
+
+            } catch (error) {
+                showError(error.message);
+                resultsSection.classList.add('hidden');
+            } finally {
+                predictBtn.disabled = false;
+                predictBtn.textContent = 'Predict Stock Price';
+            }
+        });
+
+        function showError(message) {
+            errorContainer.textContent = message;
+            errorContainer.classList.remove('hidden');
+        }
+
+        function formatCurrency(value) {
+            return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(value);
+        }
+
+        function renderResults(data) {
+            document.getElementById('summaryTitle').textContent = `Prediction Summary for ${data.ticker}`;
+            document.getElementById('predictedPrice').textContent = formatCurrency(data.predictedPriceForLastDay);
+            document.getElementById('investmentAdvice').textContent = data.advice;
+
+            // Inject the HTML for the charts received from the backend
+            document.getElementById('mainChartContainer').innerHTML = data.mainChartHtml;
+            document.getElementById('backtestChartContainer').innerHTML = data.backtestChartHtml;
+
+            populateForecastTable(data.futureForecastTableData);
+        }
+
+        function populateForecastTable(tableData) {
+            const tbody = document.querySelector('#forecastTable tbody');
+            tbody.innerHTML = ''; // Clear previous data
+            tableData.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${row.ds}</td><td>${formatCurrency(row.yhat)}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+    });
+    </script>
+</body>
+</html>
