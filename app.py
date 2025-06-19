@@ -1,4 +1,4 @@
-# app.py (Final, Resilient Version)
+# app.py (Final, Timezone-Aware Version)
 
 import os
 from flask import Flask, render_template, request, jsonify
@@ -6,9 +6,16 @@ import yfinance as yf
 from prophet import Prophet
 import pandas as pd
 import plotly.graph_objs as go
-import traceback  # Import the traceback module for detailed error logging
+import traceback
+import logging
 
-# A predefined list of popular tickers for the search suggestion
+# Configure logging to be Gunicorn-friendly
+gunicorn_logger = logging.getLogger('gunicorn.error')
+app = Flask(__name__)
+app.logger.handlers = gunicorn_logger.handlers
+app.logger.setLevel(gunicorn_logger.level)
+
+
 POPULAR_TICKERS_PY = [
     {"symbol": "AAPL", "name": "Apple Inc."},
     {"symbol": "GOOGL", "name": "Alphabet Inc. (Google)"},
@@ -21,8 +28,6 @@ POPULAR_TICKERS_PY = [
     {"symbol": "INFY.NS", "name": "Infosys Ltd."},
     {"symbol": "NVDA", "name": "NVIDIA Corporation"}
 ]
-
-app = Flask(__name__)
 
 # Chart creation functions remain the same
 def create_main_chart(df, forecast):
@@ -43,6 +48,7 @@ def create_backtest_chart(df, forecast):
     fig.update_layout(template='plotly_dark', xaxis_title='Date', yaxis_title='Stock Price', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=40, r=40, t=40, b=40))
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
+
 @app.route('/api/predict', methods=['GET'])
 def predict():
     ticker = request.args.get('ticker')
@@ -57,23 +63,26 @@ def predict():
         return jsonify({"error": "Invalid days parameter, must be an integer"}), 400
 
     try:
-        data = yf.download(ticker, period="1y")
+        # yfinance can be noisy, so we use auto_adjust=True to handle splits/dividends
+        # and repair=True for potential data issues.
+        data = yf.download(ticker, period="1y", auto_adjust=True, repair=True)
+        
         if data.empty:
             return jsonify({"error": f"No data found for ticker '{ticker}'. Please check the symbol."}), 404
         
         df = data.reset_index()[['Date', 'Close']].rename(columns={'Date': 'ds', 'Close': 'y'})
         
-        # --- THE NEW, MORE ROBUST FIX ---
-        # 1. Drop any rows with missing values (NaN) which yfinance can return.
         df.dropna(inplace=True)
         
-        # 2. Ensure the date column is in the correct datetime format.
+        # --- THE DEFINITIVE FIX ---
+        # 1. Convert 'ds' column to datetime objects.
         df['ds'] = pd.to_datetime(df['ds'])
+        # 2. IMPORTANT: Make the 'ds' column timezone-naive to avoid comparison errors.
+        df['ds'] = df['ds'].dt.tz_localize(None)
+        # --- END OF FIX ---
 
-        # 3. Check for sufficient data AFTER cleaning. Prophet needs at least 2 data points.
         if len(df) < 2:
             return jsonify({"error": f"Not enough historical data for '{ticker}' to make a forecast after cleaning."}), 400
-        # --- END OF FIX ---
 
         model = Prophet()
         model.fit(df)
@@ -81,10 +90,16 @@ def predict():
         future = model.make_future_dataframe(periods=forecast_days_int)
         forecast = model.predict(future)
         
-        # The rest of the logic remains the same
         predicted_price_for_last_day = forecast['yhat'].iloc[-1]
         last_actual = df['y'].iloc[-1]
-        avg_next_few_days_forecast = forecast['yhat'].iloc[-forecast_days_int:].head(7).mean()
+        
+        # This slice gets the future predictions, takes the first 7, and calculates the mean.
+        # It correctly handles cases where forecast_days_int is less than 7.
+        avg_next_few_days_forecast = forecast[forecast['ds'] > df['ds'].max()]['yhat'].head(7).mean()
+
+        if pd.isna(avg_next_few_days_forecast): # Handle case with no future days
+            avg_next_few_days_forecast = last_actual
+
         overall_change = (avg_next_few_days_forecast - last_actual) / last_actual
         
         if overall_change > 0.03: advice = "BUY (Upward Trend)"
@@ -109,16 +124,16 @@ def predict():
         })
 
     except Exception as e:
-        # --- ENHANCED ERROR LOGGING ---
-        # This will print the full error traceback to your Render logs for easier debugging.
-        print(f"An error occurred for ticker {ticker}:")
-        print(traceback.format_exc())
-        return jsonify({"error": "An internal error occurred. Please check the server logs."}), 500
+        # Using app.logger ensures the log is correctly handled by Gunicorn
+        app.logger.error(f"An error occurred for ticker {ticker}:")
+        app.logger.error(traceback.format_exc())
+        return jsonify({"error": "An internal error occurred. Our team has been notified."}), 500
 
 @app.route('/')
 def home():
     return render_template('index.html', popular_tickers=POPULAR_TICKERS_PY)
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    # This block is for local development only.
+    # When deployed on Render, Gunicorn runs the app.
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
