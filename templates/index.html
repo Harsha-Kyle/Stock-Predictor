@@ -4,14 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Live Stock Predictor</title>
-    <!-- We don't include Plotly.js here because the Python fig.to_html() can include it. -->
-    <!-- However, for efficiency, we can include it once here and set include_plotlyjs=False in Python. -->
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 
     <style>
-        /* CSS styles from the previous answer remain unchanged */
         :root {
             --bg-color: #1a202c;
             --card-color: #2c3e50;
@@ -112,7 +109,7 @@
 
             <div class="card">
                 <h2>Price Forecast Chart</h2>
-                <div id="mainChartContainer"></div> <!-- Placeholder for Plotly chart -->
+                <div id="mainChartContainer"></div>
             </div>
 
             <div class="card">
@@ -127,7 +124,7 @@
 
             <div class="card">
                 <h2>Backtest (Last 7 Days)</h2>
-                <div id="backtestChartContainer"></div> <!-- Placeholder for Plotly chart -->
+                <div id="backtestChartContainer"></div>
             </div>
         </div>
     </div>
@@ -138,90 +135,104 @@
     </footer>
 
     <script>
-    // --- JAVASCRIPT LOGIC (Simplified for Plotly) ---
-    document.addEventListener('DOMContentLoaded', () => {
-        const predictForm = document.getElementById('predictForm');
-        const predictBtn = document.getElementById('predictBtn');
-        const errorContainer = document.getElementById('errorContainer');
-        const welcomeMessage = document.getElementById('welcomeMessage');
-        const resultsSection = document.getElementById('resultsSection');
+        document.addEventListener('DOMContentLoaded', () => {
+            const predictForm = document.getElementById('predictForm');
+            const tickerInput = document.getElementById('tickerInput');
+            const daysInput = document.getElementById('daysInput');
+            const predictBtn = document.getElementById('predictBtn');
+            const errorContainer = document.getElementById('errorContainer');
+            const welcomeMessage = document.getElementById('welcomeMessage');
+            const resultsSection = document.getElementById('resultsSection');
 
-        // Popover logic (unchanged)
-        const infoIcon = document.getElementById('infoIcon');
-        const popover = document.getElementById('popover');
-        infoIcon.addEventListener('click', () => popover.classList.toggle('hidden'));
-        document.addEventListener('click', (e) => {
-            if (!infoIcon.contains(e.target) && !popover.contains(e.target)) {
-                popover.classList.add('hidden');
-            }
-        });
-
-        predictForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const ticker = document.getElementById('tickerInput').value.toUpperCase();
-            const days = document.getElementById('daysInput').value;
-
-            if (!ticker) {
-                showError('Please enter a ticker symbol.');
-                return;
-            }
-
-            predictBtn.disabled = true;
-            predictBtn.textContent = 'Fetching & Forecasting...';
-            errorContainer.classList.add('hidden');
-            
-            try {
-                const response = await fetch(`/api/predict?ticker=${ticker}&days=${days}`);
-                const data = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(data.error || 'An unknown error occurred.');
+            const infoIcon = document.getElementById('infoIcon');
+            const popover = document.getElementById('popover');
+            infoIcon.addEventListener('click', () => popover.classList.toggle('hidden'));
+            document.addEventListener('click', (e) => {
+                if (!infoIcon.contains(e.target) && !popover.contains(e.target)) {
+                    popover.classList.add('hidden');
                 }
-                
-                welcomeMessage.classList.add('hidden');
-                resultsSection.classList.remove('hidden');
-                renderResults(data);
+            });
 
-            } catch (error) {
-                showError(error.message);
+            predictForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const ticker = tickerInput.value.trim().toUpperCase();
+                const days = daysInput.value;
+
+                if (!ticker) {
+                    showError('Please enter a ticker symbol.');
+                    return;
+                }
+
+                predictBtn.disabled = true;
+                predictBtn.textContent = 'Fetching & Forecasting...';
+                errorContainer.classList.add('hidden');
                 resultsSection.classList.add('hidden');
-            } finally {
-                predictBtn.disabled = false;
-                predictBtn.textContent = 'Predict Stock Price';
+                
+                try {
+                    const apiUrl = `/api/predict?ticker=${ticker}&days=${days}`;
+                    const response = await fetch(apiUrl);
+
+                    if (!response.ok) {
+                        let errorMsg = `Server Error: ${response.status} ${response.statusText}`;
+                        try {
+                            const errorData = await response.json();
+                            if (errorData.error) {
+                                errorMsg = errorData.error;
+                            }
+                        } catch (jsonError) {
+                            console.error("Could not parse error response as JSON.", jsonError);
+                        }
+                        throw new Error(errorMsg);
+                    }
+                    
+                    const data = await response.json();
+                    
+                    welcomeMessage.classList.add('hidden');
+                    resultsSection.classList.remove('hidden');
+                    renderResults(data);
+
+                } catch (error) {
+                    showError(error.message);
+                    resultsSection.classList.add('hidden');
+                } finally {
+                    predictBtn.disabled = false;
+                    predictBtn.textContent = 'Predict Stock Price';
+                }
+            });
+
+            function showError(message) {
+                errorContainer.textContent = message;
+                errorContainer.classList.remove('hidden');
+            }
+
+            function formatCurrency(value) {
+                return new Intl.NumberFormat('en-US', {
+                    style: 'currency',
+                    currency: 'USD',
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                }).format(value);
+            }
+
+            function renderResults(data) {
+                document.getElementById('summaryTitle').textContent = `Prediction Summary for ${data.ticker}`;
+                document.getElementById('predictedPrice').textContent = formatCurrency(data.predictedPriceForLastDay);
+                document.getElementById('investmentAdvice').textContent = data.advice;
+                document.getElementById('mainChartContainer').innerHTML = data.mainChartHtml;
+                document.getElementById('backtestChartContainer').innerHTML = data.backtestChartHtml;
+                populateForecastTable(data.futureForecastTableData);
+            }
+
+            function populateForecastTable(tableData) {
+                const tbody = document.querySelector('#forecastTable tbody');
+                tbody.innerHTML = '';
+                tableData.forEach(row => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `<td>${row.ds}</td><td>${formatCurrency(row.yhat)}</td>`;
+                    tbody.appendChild(tr);
+                });
             }
         });
-
-        function showError(message) {
-            errorContainer.textContent = message;
-            errorContainer.classList.remove('hidden');
-        }
-
-        function formatCurrency(value) {
-            return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(value);
-        }
-
-        function renderResults(data) {
-            document.getElementById('summaryTitle').textContent = `Prediction Summary for ${data.ticker}`;
-            document.getElementById('predictedPrice').textContent = formatCurrency(data.predictedPriceForLastDay);
-            document.getElementById('investmentAdvice').textContent = data.advice;
-
-            // Inject the HTML for the charts received from the backend
-            document.getElementById('mainChartContainer').innerHTML = data.mainChartHtml;
-            document.getElementById('backtestChartContainer').innerHTML = data.backtestChartHtml;
-
-            populateForecastTable(data.futureForecastTableData);
-        }
-
-        function populateForecastTable(tableData) {
-            const tbody = document.querySelector('#forecastTable tbody');
-            tbody.innerHTML = ''; // Clear previous data
-            tableData.forEach(row => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${row.ds}</td><td>${formatCurrency(row.yhat)}</td>`;
-                tbody.appendChild(tr);
-            });
-        }
-    });
     </script>
 </body>
 </html>
